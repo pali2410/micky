@@ -1,0 +1,254 @@
+diff --git a/dictation.py b/dictation.py
+index 4246a55..addb680 100644
+--- a/dictation.py
++++ b/dictation.py
+@@ -14,7 +14,12 @@ FAILED_DIR = os.path.expanduser("~/Library/Logs/Hey Jev dictation failed")
+ START = re.compile(r"^\W*(?:(?:please|can you|could you)\s+)?(?:start\s+)?(?:transcrib\w*|dictat\w*|take notes)"
+                    r"(?:\s+(?:this|this meeting|this call|notes|mode|now|please|for me))?\W*$", re.I)
+ 
+-USER_VOCAB = os.path.join(HERE, "vocabulary.json")  # your own words, gitignored
++if os.name == "nt":
++    from windows_backend import DATA
++    HISTORY = str(DATA / "dictation.jsonl")
++    FAILED_DIR = str(DATA / "dictation-failed")
++
++USER_VOCAB = str(DATA / "vocabulary.json") if os.name == "nt" else os.path.join(HERE, "vocabulary.json")  # your own words, gitignored
+ VOCAB = []
+ 
+ 
+@@ -56,6 +61,9 @@ def strip_prompt(text):
+ 
+ 
+ def paste(text):
++    if os.name == "nt":
++        from windows_backend import paste as windows_paste
++        return windows_paste(text)
+     subprocess.run(["pbcopy"], input=text.encode(), check=True)  # stays on the clipboard too, in case the paste misses
+     time.sleep(0.2)
+     # System Events, not pynput: pynput reads the keyboard layout, which crashes the app off the main thread
+@@ -113,6 +121,9 @@ class Dictation:
+         return text, failed, len(self.chunks)
+ 
+     def _transcribe(self, audio, part):
++        if os.name == "nt":
++            from windows_backend import transcribe
++            return transcribe(audio)
+         wav = io.BytesIO()
+         sf.write(wav, audio, self.rate, format="WAV")
+         for attempt in range(3):
+diff --git a/secrets_store.py b/secrets_store.py
+index 9aa4b2f..4855134 100644
+--- a/secrets_store.py
++++ b/secrets_store.py
+@@ -13,6 +13,7 @@ OPTIONAL = ("OPENAI_API_KEY",)  # only used for dictation, straight to OpenAI in
+ 
+ 
+ def keychain_value(name):
++    if os.name == "nt": return None
+     result = subprocess.run(
+         ["security", "find-generic-password", "-a", name, "-s", SERVICE, "-w"],
+         capture_output=True,
+diff --git a/siri.py b/siri.py
+index b7aaba1..326c0b6 100644
+--- a/siri.py
++++ b/siri.py
+@@ -1,3 +1,4 @@
++# Micky Windows/local modifications; original HeyJev command, timer and recorder engine retained.
+ """Mac voice assistant: hold right Option or say "Hey Jev", then speak. Jev decides, Fish speaks."""
+ import os, re, sys, json, time, queue, random, argparse, subprocess, tempfile, threading, hashlib, collections
+ import numpy as np, requests, sounddevice as sd, soundfile as sf
+@@ -16,12 +17,13 @@ PTT_KEY = keyboard.Key.alt_r
+ SAMPLE_RATE = 16000
+ GATE = 0.65
+ WHISPER_MODEL = "small.en"
++WINDOWS = os.name == "nt"
+ COMMAND_PROMPT = "Open Spotify. Set a timer for five minutes. Play. Pause. Next track. Turn Spotify down. Turn the Mac volume down. Mute. Dark mode on. Lock the screen."
+ # No prompt in wake mode: on noise Whisper echoes the prompt back, which looked like a real "Hey Jev"
+ WAKE_PROMPT = None
+ NO_SPEECH_MAX = 0.6  # Whisper's own "this probably isn't speech" score, above this the segment is dropped
+ WAKE_CHIME = "/System/Library/Sounds/Tink.aiff"
+-SAVE_CLIPS = os.path.expanduser("~/Library/Logs/Hey Jev clips")  # set to None to stop saving ignored phrases
++SAVE_CLIPS = None if WINDOWS else os.path.expanduser("~/Library/Logs/Hey Jev clips")  # set to None to stop saving ignored phrases
+ # Whisper often hears "Jev" as Jeff or Jeb, so accept the close ones; can be mid-phrase since calls run sentences together
+ NAMES = "jev|jevs|jeff|jeffs|jef|jeb|jab|chev|jeve|jav"
+ # A soft "hey" can get swallowed, so a bare "Jeff," at the very start counts too, but only with the comma ("Jeff said..." doesn't)
+@@ -31,14 +33,14 @@ DICTATE_CHIME = "/System/Library/Sounds/Pop.aiff"
+ MIC_LEVELS = collections.deque(maxlen=40)  # mic loudness while dictating, the bubble draws it
+ 
+ # Add an app with a line in apps.json: "name": "App Name", or {"app", "say", "heard_as"} for extras
+-with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "apps.json")) as f:
++with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "apps.windows.json" if WINDOWS else "apps.json"), encoding="utf-8") as f:
+     _apps = json.load(f)
+ APPS = {k: v if isinstance(v, str) else v["app"] for k, v in _apps.items()}
+ APP_SAY = {k: v if isinstance(v, str) else v.get("say", v["app"]) for k, v in _apps.items()}
+ # "heard_as" in apps.json: things Whisper writes instead of the app name, swapped back before Jev sees the text
+ HEARD_AS = [(re.compile(r"\b(?:" + "|".join(map(re.escape, sorted(v["heard_as"], key=len, reverse=True))) + r")\b", re.I), APP_SAY[k])
+             for k, v in _apps.items() if isinstance(v, dict) and v.get("heard_as")]
+-BROWSERS = ("chrome", "brave", "safari")
++BROWSERS = ("chrome", "brave", "edge") if WINDOWS else ("chrome", "brave", "safari")
+ DEFAULT_BROWSER = "chrome"  # used for "new tab" when no browser is named or in front
+ 
+ 
+@@ -428,7 +430,16 @@ def run_timer(action, text):
+         return ("timer_cancel", {})
+ 
+ 
++_timer_started = False
++_timer_callback = None
++_timer_lock = threading.Lock()
++
+ def start_timer_loop(on_done):
++    global _timer_started, _timer_callback
++    with _timer_lock:
++        _timer_callback = on_done
++        if _timer_started: return
++        _timer_started = True
+     """Fires on_done(timer) when a timer runs out."""
+     def loop():
+         while True:
+@@ -439,7 +450,7 @@ def start_timer_loop(on_done):
+                     TIMERS.remove(t)
+             for t in due:
+                 try:
+-                    on_done(t)
++                    _timer_callback(t)
+                 except Exception as e:
+                     print(f"  timer alert failed: {e}")
+     threading.Thread(target=loop, daemon=True).start()
+@@ -778,8 +789,9 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
+     from faster_whisper import WhisperModel
+     print("loading whisper...")
+     emit(notify, "Starting", "Loading Whisper\u2026")
+-    model = WhisperModel(WHISPER_MODEL, device="cpu", compute_type="int8")
+-    rec = Recorder(mic)
++    model = __import__("windows_backend").whisper() if WINDOWS else WhisperModel(WHISPER_MODEL, device="cpu", compute_type="int8")
++    rec = Recorder(__import__("windows_backend").choose_mic() if WINDOWS and mic == "" else mic)
++    shutdown = threading.Event()
+     busy = threading.Lock()
+     armed_until = [0.0]
+     dictation = Dictation(NAMES, lambda: (OA_KEY, OR_KEY), SAMPLE_RATE)
+@@ -818,13 +830,13 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
+ 
+     def start_dictation():
+         print(f"\n> dictation started")
+-        if not (OA_KEY or OR_KEY):
++        if not WINDOWS and not (OA_KEY or OR_KEY):
+             say("Add an OpenRouter or OpenAI key first.", notify)
+             emit(notify, "Ready", "Dictation needs an OpenRouter or OpenAI key")
+             return
+         MIC_LEVELS.clear()
+         emit(notify, "Dictating", "Say \u201cstop transcribing\u201d when you\u2019re done")  # bubble shows with the pop
+-        subprocess.run(["afplay", DICTATE_CHIME])
++        __import__("windows_backend").chime() if WINDOWS else subprocess.run(["afplay", DICTATE_CHIME])
+         dictation.start()
+         rec.dictating = True
+         rec.sync_mic()
+@@ -839,13 +851,13 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
+         rec.dictating = False
+         rec.sync_mic()
+         emit(notify, "Finishing", "Writing it up\u2026")
+-        subprocess.run(["afplay", DICTATE_CHIME])
++        __import__("windows_backend").chime() if WINDOWS else subprocess.run(["afplay", DICTATE_CHIME])
+         try:
+             text, failed, total = dictation.finish()
+             print(f"  dictation: {text!r}")
+             if failed:  # never paste a dictation with holes in it as if it worked
+                 if text.replace("[missing part]", "").strip():
+-                    subprocess.run(["pbcopy"], input=text.encode(), check=True)
++                    __import__("windows_backend").copy_text(text) if WINDOWS else subprocess.run(["pbcopy"], input=text.encode(), check=True)
+                 emit(notify, "Something went wrong", f"{failed} of {total} parts failed, not pasted. What worked is on your "
+                      "clipboard, and the missing audio is in Logs/Hey Jev dictation failed")
+             elif text:
+@@ -871,7 +883,7 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
+         run_turn(text, ms)
+ 
+     def wake_loop():
+-        while True:
++        while not shutdown.is_set():
+             try:
+                 audio = rec.segments.get(timeout=1)
+             except queue.Empty:
+@@ -891,6 +903,9 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
+ 
+     def wake_turn(audio):
+         text, ms = transcribe(audio, WAKE_PROMPT, drop_noise=True)
++        if mode == "continuous":
++            run_turn(WAKE.sub("", text).strip(), ms, quiet=True)
++            return
+         m = WAKE.search(text)
+         if m:
+             print(f"\n  (wake: {text!r})")
+@@ -902,7 +917,7 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
+                 with busy:
+                     rec.paused = True
+                     try:
+-                        subprocess.run(["afplay", WAKE_CHIME])
++                        __import__("windows_backend").chime() if WINDOWS else subprocess.run(["afplay", WAKE_CHIME])
+                         time.sleep(0.2)
+                     finally:
+                         rec.paused = False
+@@ -916,7 +931,9 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
+             save_clip(audio)
+ 
+     def set_mode(new):
+-        rec.wake = new == "wake"
++        nonlocal mode
++        mode = new
++        rec.wake = new in ("wake", "continuous")
+         rec.sync_mic()
+         armed_until[0] = 0
+         print(f"\n[mode: {'always listening' if rec.wake else 'hold right Option'}]")
+@@ -941,13 +958,13 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
+         if rec.dictating:  # don't pause the mic or talk over a dictation, just chime and tell her afterwards
+             late_timers.append(t)
+             emit(notify, "Dictating", f"\u23f0 {t['label'] or 'Timer finished'}, I'll tell you when you stop")
+-            subprocess.run(["afplay", "/System/Library/Sounds/Glass.aiff"])
++            __import__("windows_backend").chime() if WINDOWS else subprocess.run(["afplay", "/System/Library/Sounds/Glass.aiff"])
+             return
+         with busy:
+             rec.paused = True
+             try:
+                 emit(notify, "Time's up", t["label"] or "Timer finished")
+-                subprocess.run(["afplay", "/System/Library/Sounds/Glass.aiff"])
++                __import__("windows_backend").chime() if WINDOWS else subprocess.run(["afplay", "/System/Library/Sounds/Glass.aiff"])
+                 say(timer_done_line(t), notify)
+             finally:
+                 time.sleep(0.3)
+@@ -965,6 +982,11 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
+     if controls is not None:
+         while True:
+             command = controls.get()
++            if command == "quit":
++                shutdown.set()
++                rec.wake = rec.dictating = rec.on = False
++                rec.stream.close()
++                return
+             if isinstance(command, tuple) and command[0] == "mode":
+                 set_mode(command[1])
+             elif isinstance(command, tuple) and command[0] == "mic":
+@@ -996,10 +1018,13 @@ def main():
+     ap.add_argument("--wake", action="store_true", help="always listening, say \"Hey Jev\" instead of holding Option")
+     args = ap.parse_args()
+     if args.ui:
+-        from assistant_ui import run_app
++        if WINDOWS:
++            from windows_app import run_app
++        else:
++            from assistant_ui import run_app
+         run_app()
+         return
+-    if not TS_KEY or not FISH_KEY:
++    if not WINDOWS and (not TS_KEY or not FISH_KEY):
+         sys.exit("need TYPESAFE_API_KEY and FISH_AUDIO_API_KEY in Keychain or .env")
+     if args.text:
+         handle(args.text)
+@@ -1007,5 +1032,9 @@ def main():
+     run_voice_assistant(mode="wake" if args.wake else "ptt")
+ 
+ 
++if WINDOWS:
++    import sys as _sys
++    __import__("windows_backend").install(_sys.modules[__name__])
++
+ if __name__ == "__main__":
+     main()

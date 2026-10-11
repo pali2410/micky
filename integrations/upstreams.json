@@ -1,0 +1,37 @@
+[
+  {
+    "name": "Bigfoot",
+    "url": "https://github.com/jhmeel/bigfoot.git",
+    "commit": "95f7ffdb29ff49efe321a96c9caa3e5c8c94a1e6",
+    "patch": "integrations/patches/Bigfoot.patch",
+    "overlay": "integrations/overlays/Bigfoot"
+  },
+  {
+    "name": "HeyJev",
+    "url": "https://github.com/henryklunaris/hey-jev.git",
+    "commit": "24e4b378350d999d2b45ff2549ea039c2bc7863d",
+    "patch": "integrations/patches/HeyJev.patch",
+    "overlay": "integrations/overlays/HeyJev"
+  },
+  {
+    "name": "OpenMausBot",
+    "url": "https://github.com/milind-soni/OpenMausBot.git",
+    "commit": "7ea18ea49ce3e8933eb2e362010f1a41fb4b3435",
+    "patch": "integrations/patches/OpenMausBot.patch",
+    "overlay": "integrations/overlays/OpenMausBot"
+  },
+  {
+    "name": "Rakazo",
+    "url": "https://github.com/elie222/rakazo.git",
+    "commit": "9d2248c3667b4dadf711cbb7bf82309d8de9dfe6",
+    "patch": "integrations/patches/Rakazo.patch",
+    "overlay": "integrations/overlays/Rakazo"
+  },
+  {
+    "name": "RobotHeads",
+    "url": "https://github.com/fayazara/robot-heads.git",
+    "commit": "58ebf6439a8125a769f63b22ffd35bc18834b1b5",
+    "patch": null,
+    "overlay": null
+  }
+]

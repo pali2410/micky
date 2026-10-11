@@ -1,0 +1,18 @@
+{
+  "file explorer": {
+    "app": "explorer.exe",
+    "say": "File Explorer",
+    "heard_as": [
+      "finder"
+    ]
+  },
+  "notepad": "notepad.exe",
+  "calculator": "calc.exe",
+  "chrome": "chrome",
+  "edge": "msedge",
+  "brave": "brave",
+  "spotify": "Spotify",
+  "control panel": "control.exe",
+  "settings": "ms-settings:",
+  "terminal": "wt.exe"
+}

@@ -1,0 +1,41 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bops-bg: #141416;
+  --color-bops-panel: #1c1c1f;
+  --color-bops-card: #232326;
+  --color-bops-border: #2e2e32;
+  --color-bops-text: #f4f4f5;
+  --color-bops-muted: #a1a1aa;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background-color: #141416;
+  color: #f4f4f5;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Allow transparent background for the floating overlay */
+body.overlay-body {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
+@keyframes bob {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-6px); }
+}
+
+@keyframes pulseGlow {
+  0%, 100% { opacity: 0.8; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.05); }
+}
+
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #2e2e32; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #3f3f46; }

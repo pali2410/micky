@@ -1,0 +1,5 @@
+const assert=require('node:assert/strict');const {serialToolStream}=require('../runtimes/deepseek/serial-tools.cjs');
+const transformer=serialToolStream();let output='';transformer.on('data',chunk=>output+=chunk);
+transformer.on('end',()=>{const packets=output.split('\n').filter(l=>l.startsWith('data: {')).map(l=>JSON.parse(l.slice(6)));assert.equal(packets[0].choices[0].delta.tool_calls.length,1);assert.equal(packets[1].choices[0].delta.tool_calls.length,0);assert.equal(packets[2].choices[0].delta.content,'héllo');assert.ok(output.endsWith('data: [DONE]\n\n'));console.log('PASS: speculative calls are withheld; UTF-8 and SSE boundaries preserved.');});
+const input=Buffer.from('data: '+JSON.stringify({choices:[{delta:{tool_calls:[{index:0,id:'first'},{index:1,id:'speculative'}]}}]})+'\n\ndata: '+JSON.stringify({choices:[{delta:{tool_calls:[{index:1,function:{arguments:'later'}}]}}]})+'\n\ndata: '+JSON.stringify({choices:[{delta:{content:'héllo'}}]})+'\n\ndata: [DONE]\n\n');
+for(let i=0;i<input.length;i++)transformer.write(input.subarray(i,i+1));transformer.end();

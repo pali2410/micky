@@ -1,0 +1,269 @@
+diff --git a/server/browser-live.test.ts b/server/browser-live.test.ts
+index 352e0fe..aef1453 100644
+--- a/server/browser-live.test.ts
++++ b/server/browser-live.test.ts
+@@ -128,6 +128,13 @@ describe("browser viewer protocol boundary", () => {
+ });
+ 
+ describe("authenticated browser viewer relay", () => {
++  it('accepts closing a tab that disappeared after the displayed tab list', async () => {
++    const a = await open();
++    await a.action({type:'take'});
++    execute.mockRejectedValueOnce(Object.assign(new Error('Command failed'), { stdout: JSON.stringify({success:false,error:'Tab t2 not found; run agent-browser tab'}) }));
++    await expect(a.action({type:'tab-close',tabId:'t2'})).resolves.toEqual({ok:true});
++    expect(a.res.writableEnded).toBe(false);
++  });
+   it("fences a late stream startup when that owner is closed during discovery", async () => {
+     let finish!: (value: ReturnType<typeof output>) => void;
+     execute.mockImplementationOnce(() => new Promise((resolve) => finish = resolve));
+diff --git a/server/browser-live.ts b/server/browser-live.ts
+index 064b2fd..01b84b2 100644
+--- a/server/browser-live.ts
++++ b/server/browser-live.ts
+@@ -345,6 +345,9 @@ export class BrowserLive {
+       }
+       return data;
+     } catch (error) {
++      // A tab can disappear between the displayed tab list and a close click.
++      // Closing that already-closed tab is complete, rather than a failed browser.
++      if (args[0] === 'tab' && args[1] === 'close' && /Tab .+ not found/.test(String((error as {stdout?:string}).stdout ?? error))) return { ok:true };
+       if (timedOut(error)) throw new BrowserBusyError();
+       console.warn("browser-live:", error);
+       if (browserLaunchFailure(error)) {
+diff --git a/server/drivers/openai-compat.ts b/server/drivers/openai-compat.ts
+index 0ce6015..180d3a7 100644
+--- a/server/drivers/openai-compat.ts
++++ b/server/drivers/openai-compat.ts
+@@ -199,6 +199,7 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
+         messages,
+         stream,
+         stream_options: stream ? { include_usage: true } : undefined,
++        ...(/^http:\/\/(?:127\.0\.0\.1|localhost):11434\/v1\/?$/.test(config.url ?? '') ? { think: false } : {}),
+         ...(config.provider && isOpenRouterUrl(config.url)
+           ? { provider: { order: [config.provider], allow_fallbacks: false } }
+           : {}),
+diff --git a/server/index.ts b/server/index.ts
+index 28ac049..97d33d3 100644
+--- a/server/index.ts
++++ b/server/index.ts
+@@ -16581,7 +16581,9 @@ const claudeUpdatesInFlight = new Set<string>();
+ /** The web UI's pages: never framed by another page (a hidden frame could
+  * otherwise act on a pair or sign-in page unseen), and they send no Referer.
+  * Nothing frames the web UI: the desktop app shows it in its own window. */
+-const PAGE_HEADERS = { "content-security-policy": "frame-ancestors 'none'", "x-frame-options": "DENY", "referrer-policy": "no-referrer" } as const;
++const PAGE_HEADERS = process.env.OMB_MICKY_EMBED === '1'
++  ? { "content-security-policy": "frame-ancestors http://localhost:3000 http://127.0.0.1:3000", "referrer-policy": "no-referrer" }
++  : { "content-security-policy": "frame-ancestors 'none'", "x-frame-options": "DENY", "referrer-policy": "no-referrer" };
+ 
+ /** The built UI, when this process serves it (OMB_STATIC_DIR: set by the
+  * desktop app and by the container image). Public by design: it is the same
+diff --git a/src/App.tsx b/src/App.tsx
+index 96522b5..bba64ad 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -451,7 +451,7 @@ function Application() {
+         </ThreadRefsProvider>
+         <WelcomeGate viewer={viewer} />
+         <GuidedTour />
+-        <LiveCallHost />
++        {import.meta.env.VITE_MICKY_NO_VOICE !== '1' && <LiveCallHost />}
+         <FirstConversationTour quiet={spotlightsQuiet(viewer)} />
+       </StoreProvider>
+     </DesktopCapabilitiesProvider>
+@@ -459,5 +459,5 @@ function Application() {
+ }
+ 
+ export default function App() {
+-  return <WorkspaceBackupRecovery><Application /></WorkspaceBackupRecovery>;
++  return <div className="flex flex-col h-screen">{import.meta.env.VITE_MICKY_NO_VOICE === '1' && <div className="flex-shrink-0 flex items-center justify-between px-4 py-2 bg-panel border-b border-ink/10"><strong>Maus · Micky local workspace</strong>{((window as any).mickyElectron || ['127.0.0.1','localhost'].includes(location.hostname)) && <button className="ui-button" onClick={()=>{const bridge=(window as any).mickyElectron;if(bridge?.switchApp)void bridge.switchApp('micky');else location.assign('http://localhost:3000');}}>Switch to Micky</button>}</div>}<div className="flex-1 min-h-0 relative"><WorkspaceBackupRecovery><Application /></WorkspaceBackupRecovery></div></div>;
+ }
+diff --git a/src/components/CallView.tsx b/src/components/CallView.tsx
+index 405453e..817c0d7 100644
+--- a/src/components/CallView.tsx
++++ b/src/components/CallView.tsx
+@@ -51,6 +51,7 @@ const CALL_ENDPOINT_MS = 850;
+ export type CallButtonPlacement = "header" | "composer";
+ 
+ export function CallButton({ bot, placement = "header" }: { bot: Bot; placement?: CallButtonPlacement }) {
++  if (import.meta.env.VITE_MICKY_NO_VOICE === '1') return null;
+   return (
+     <CallTargetButton
+       placement={placement}
+diff --git a/src/components/Composer.tsx b/src/components/Composer.tsx
+index 09c2343..288932b 100644
+--- a/src/components/Composer.tsx
++++ b/src/components/Composer.tsx
+@@ -1233,7 +1233,7 @@ export function Composer({
+             <Square size={14} className="fill-current" />
+           </button>
+         )}
+-        {!locked && !busy && !hasContent && capabilities.dictation.available && (
++        {import.meta.env.VITE_MICKY_NO_VOICE !== '1' && !locked && !busy && !hasContent && capabilities.dictation.available && (
+           <button
+             onClick={toggleMic}
+             aria-label={recording ? t("composer.dictation.stop") : t("composer.dictation.start")}
+diff --git a/src/components/ComputerPanel.tsx b/src/components/ComputerPanel.tsx
+index 10bc43e..38b5a1d 100644
+--- a/src/components/ComputerPanel.tsx
++++ b/src/components/ComputerPanel.tsx
+@@ -379,7 +379,8 @@ export function ComputerPanel({
+   const [storedPanelView, setPanelView] = useState<ComputerPanelView>(() => readComputerPanelView(bot.id));
+   const requestedDataResult = state.dataResultFocus?.botId === bot.id ? state.dataResultFocus : undefined;
+   const [dataRequest, setDataRequest] = useState<{ id: string; requestId: number }>();
+-  const panelView: ComputerPanelView = advanced
++  const mickyLocal = import.meta.env.VITE_MICKY_NO_VOICE === '1';
++  const panelView: ComputerPanelView = mickyLocal ? 'browser' : advanced
+     ? storedPanelView === "files" ? "computer" : storedPanelView
+     : storedPanelView === "routines" || storedPanelView === "android" ? "computer" : storedPanelView;
+   const androidStatus = useAndroidUsbDevices();
+@@ -1448,15 +1449,15 @@ export function ComputerPanel({
+             </button>
+           )}
+           <div className="mx-9 flex min-w-0 flex-wrap justify-center gap-0.5 rounded-full bg-inset p-0.5" data-tour="computer-tabs" data-testid="computer-tabs" aria-label="Bot panel view">
+-            <button
++            {!mickyLocal && <button
+               onClick={() => selectPanelView("computer")}
+               aria-pressed={panelView === "computer"}
+               className={tabClass(panelView === "computer")}
+             >
+               <Monitor size={13} /> {t("computer.tab.computer")}
+               {placeLive && isComputerPlace(livePlace) && <span className="size-1.5 animate-pulse rounded-full bg-success" role="img" aria-label={t("place.live")} data-testid="computer-tab-live" />}
+-            </button>
+-            {advanced && (
++            </button>}
++            {!mickyLocal && advanced && (
+             <button
+               type="button"
+               onClick={() => selectPanelView("routines")}
+@@ -1464,7 +1465,7 @@ export function ComputerPanel({
+               className={tabClass(panelView === "routines")}
+             ><CalendarClock size={13} />{t("computer.tab.routines")}</button>
+             )}
+-            {advanced && androidConnected && (
++            {!mickyLocal && advanced && androidConnected && (
+             <button
+               onClick={() => selectPanelView("android")}
+               aria-pressed={panelView === "android"}
+@@ -1487,7 +1488,7 @@ export function ComputerPanel({
+               {placeLive && livePlace === "browser" && <span className="size-1.5 animate-pulse rounded-full bg-success" role="img" aria-label={t("place.live")} data-testid="browser-tab-live" />}
+             </button>
+             )}
+-            <button
++            {!mickyLocal && <button
+               type="button"
+               data-tour="computer-data"
+               onClick={() => selectPanelView("data")}
+@@ -1495,8 +1496,8 @@ export function ComputerPanel({
+               className={tabClass(panelView === "data")}
+             >
+               <Database size={13} /> {t("computer.tab.data")}
+-            </button>
+-            {!advanced && (
++            </button>}
++            {!mickyLocal && !advanced && (
+             <button
+               type="button"
+               onClick={() => selectPanelView("files")}
+diff --git a/src/components/GroupCallView.tsx b/src/components/GroupCallView.tsx
+index 1660a37..a20cc66 100644
+--- a/src/components/GroupCallView.tsx
++++ b/src/components/GroupCallView.tsx
+@@ -28,7 +28,7 @@ type Phase = "listening" | "sending" | "working" | "speaking";
+ 
+ export function GroupCallButton({ group, members }: { group: Group; members: Bot[] }) {
+   const { capabilities, ready } = useDesktopCapabilities();
+-  if (group.dm) return null;
++  if (group.dm || import.meta.env.VITE_MICKY_NO_VOICE === '1') return null;
+   // A room call takes turns, which only the Mac app's own page can do, and a
+   // room has no Live call: elsewhere (a browser, the Windows or Linux app, My
+   // Cloud) there is no room call to offer, so no button that can't start one.
+diff --git a/src/components/ModelPicker.tsx b/src/components/ModelPicker.tsx
+index fa16b37..8de31b4 100644
+--- a/src/components/ModelPicker.tsx
++++ b/src/components/ModelPicker.tsx
+@@ -1004,7 +1004,7 @@ export function ModelPicker({
+           ) : (
+           <>
+           {pickerInstances.length > 0 && <ModelEngineRail instances={pickerInstances} selectedInstance={railInstance} claudeInstance={claudeRailInstance} openaiInstance={openaiRailInstance} onSelect={selectRail}
+-            onAddApiKeys={window.ogb?.remoteClient?.active === true ? undefined : openApiKeys} />}
++            onAddApiKeys={window.ogb?.remoteClient?.active === true || import.meta.env.VITE_MICKY_NO_VOICE === '1' ? undefined : openApiKeys} />}
+ 
+           <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
+             {threadId && (
+@@ -1071,7 +1071,7 @@ export function ModelPicker({
+                   {railInstance.snapshot.chatgptPlan && railInstance.snapshot.authenticated && (
+                     <ChatGptPlanStatus key={railInstance.instanceId} instanceId={railInstance.instanceId} />
+                   )}
+-                  {railInstance.access === "api"
++                  {railInstance.access === "api" && import.meta.env.VITE_MICKY_NO_VOICE !== '1'
+                     ? <div className="mt-0.5 text-[11.5px] text-ink-secondary">{t("model.apiKeyHint")}</div>
+                     : pane === "custom" && <div className="mt-0.5 text-[11.5px] text-ink-secondary">{t("model.localHint")}</div>}
+                 </div>
+@@ -1261,7 +1261,7 @@ export function ModelPicker({
+               </button>
+               {/* A remote client's settings hide the keys section, so the
+                   shortcut would land somewhere else. */}
+-              {window.ogb?.remoteClient?.active !== true && (
++              {window.ogb?.remoteClient?.active !== true && import.meta.env.VITE_MICKY_NO_VOICE !== '1' && (
+                 <button type="button" data-model-add-api-keys onClick={openApiKeys} className="flex shrink-0 items-center gap-1.5 px-4 py-2 text-[12px] text-ink-secondary hover:bg-control/60 hover:text-ink">
+                   <KeyRound size={12} aria-hidden="true" />
+                   {apiKeysLabel(pickerInstances)}
+diff --git a/src/components/SettingsModal.tsx b/src/components/SettingsModal.tsx
+index 91e96a2..b94da47 100644
+--- a/src/components/SettingsModal.tsx
++++ b/src/components/SettingsModal.tsx
+@@ -3,6 +3,7 @@
+ // is the stuff shared by every bot: who you are, your keys, and the
+ // machine your bots can borrow.
+ import { useEffect, useRef, useState } from "react";
++import { MickyLocalSettings } from './MickyLocalSettings';
+ import { Archive, CircleUser, Coins, FlaskConical, KeyRound, Monitor, Palette, ScrollText, Search, Sparkles, TabletSmartphone, Terminal, User, Users, X, Building2, Zap, BookOpen } from "lucide-react";
+ import { api, useStore, type AppSettingsSection, type ConfigStatus } from "@/state/store";
+ import { analyticsEnabled, setAnalyticsEnabled } from "@/lib/analytics";
+@@ -1085,6 +1086,8 @@ export function SettingsModal() {
+     <h3 className="px-1 text-[13px] font-semibold uppercase tracking-[0.06em] text-ink-secondary">{t(labelKey)}</h3>
+   );
+ 
++  if (import.meta.env.VITE_MICKY_NO_VOICE === '1') return <MickyLocalSettings />;
++
+   return (
+     <div
+       className="glass-popup-frame"
+diff --git a/src/components/Sidebar.tsx b/src/components/Sidebar.tsx
+index 4c96f88..2fba404 100644
+--- a/src/components/Sidebar.tsx
++++ b/src/components/Sidebar.tsx
+@@ -2805,7 +2805,7 @@ export function Sidebar({ open, onClose, collapseToIcons = false }: {
+               <SidebarProfileMenu />
+             </div>
+             <UpdateIndicator className="mx-1" />
+-            <SidebarAppsButton />
++            {import.meta.env.VITE_MICKY_NO_VOICE !== '1' && <SidebarAppsButton />}
+           </div>
+         )}
+       </div>
+diff --git a/src/components/SpeakButton.tsx b/src/components/SpeakButton.tsx
+index 870daf2..e7b5b45 100644
+--- a/src/components/SpeakButton.tsx
++++ b/src/components/SpeakButton.tsx
+@@ -49,6 +49,7 @@ export function useSpeakAction({ text, botId, messageId, voiceId, tts, localVoic
+ 
+ export function SpeakButton({ className, ...args }: SpeakArgs & { className?: string }) {
+   const { ready, mine, preparing, label, toggle } = useSpeakAction(args);
++  if (import.meta.env.VITE_MICKY_NO_VOICE === '1') return null;
+   return (
+     <button
+       onClick={toggle}
+diff --git a/src/state/store.tsx b/src/state/store.tsx
+index e77ba0a..4fda9f3 100644
+--- a/src/state/store.tsx
++++ b/src/state/store.tsx
+@@ -1731,7 +1731,7 @@ export function reducer(state: AppState, action: Action): AppState {
+       return { ...state, groups, selectedId };
+     }
+     case "instances":
+-      return { ...state, instances: action.instances };
++      return { ...state, instances: import.meta.env.VITE_MICKY_NO_VOICE === '1' ? action.instances.filter(i=>i.instanceId==='openaiCompat') : action.instances };
+     case "configStatus":
+       return { ...state, config: action.config };
+     case "liveCall":

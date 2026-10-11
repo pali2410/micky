@@ -1,0 +1,19 @@
+[submodule "Bigfoot"]
+	path = Bigfoot
+	url = https://github.com/jhmeel/bigfoot.git
+
+[submodule "HeyJev"]
+	path = HeyJev
+	url = https://github.com/henryklunaris/hey-jev.git
+
+[submodule "OpenMausBot"]
+	path = OpenMausBot
+	url = https://github.com/milind-soni/OpenMausBot.git
+
+[submodule "Rakazo"]
+	path = Rakazo
+	url = https://github.com/elie222/rakazo.git
+
+[submodule "RobotHeads"]
+	path = RobotHeads
+	url = https://github.com/fayazara/robot-heads.git

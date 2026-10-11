@@ -1,0 +1,200 @@
+diff --git a/apps/api/src/router.ts b/apps/api/src/router.ts
+index b8c3085..dd3272a 100644
+--- a/apps/api/src/router.ts
++++ b/apps/api/src/router.ts
+@@ -1114,6 +1114,7 @@ export function createRouter(deps: RouterDeps) {
+           context.actor,
+         );
+         const available = listAvailablePiCatalog(auth.byProvider, auth.byModel);
++        if (process.env.RAKAZO_LOCAL_ONLY === '1') return available.filter(entry=>entry.provider==='local');
+         const live = await codexLiveCatalogsForSpace(
+           deps.prisma,
+           deps.secrets,
+@@ -1235,6 +1236,7 @@ export function createRouter(deps: RouterDeps) {
+         return { ok: true as const };
+       }),
+       connect: authed.models.connect.handler(async ({ context, input }) => {
++        if(process.env.RAKAZO_LOCAL_ONLY==='1' && input.provider!=='local')throw new ORPCError('FORBIDDEN',{message:'This workspace uses local models'});
+         let plaintext: string;
+         try {
+           let previousPlaintext: string | undefined;
+diff --git a/apps/web/src/main.tsx b/apps/web/src/main.tsx
+index 0e81d25..1ad9dd4 100644
+--- a/apps/web/src/main.tsx
++++ b/apps/web/src/main.tsx
+@@ -2,6 +2,7 @@ import { StrictMode, useEffect, useLayoutEffect } from "react";
+ import { createRoot } from "react-dom/client";
+ import { BrowserRouter } from "react-router-dom";
+ import { App } from "./App";
++import { Button } from "@rakazo/ui-web";
+ import { DesktopUpdatesProvider } from "./components/DesktopUpdates";
+ import { I18nBootstrap } from "./components/I18nBootstrap";
+ import { applyUiDirection } from "./lib/apply-ui-direction";
+@@ -28,6 +29,10 @@ function AppearanceSync() {
+   useEffect(() => watchSystemAppearance(), []);
+   return null;
+ }
++function WorkspaceApp() {
++  if(import.meta.env.VITE_MICKY_LOCAL_ONLY!=='1')return <App/>;
++  return <div className="flex h-dvh flex-col bg-background"><header className="flex shrink-0 items-center justify-between border-b px-4 py-2 text-sm"><span>Rakazo · Micky</span><Button variant="ghost" size="sm" onClick={()=>{const bridge=(window as unknown as {mickyElectron?:{switchApp:(mode:string)=>Promise<void>}}).mickyElectron;if(bridge)void bridge.switchApp('micky');else window.location.assign('http://localhost:3000');}}>Switch to Micky</Button></header><div className="min-h-0 flex-1"><App/></div></div>;
++}
+ 
+ createRoot(document.getElementById("root")!).render(
+   <StrictMode>
+@@ -41,7 +46,7 @@ createRoot(document.getElementById("root")!).render(
+           land while the URL already moved. */}
+       <BrowserRouter useTransitions={false}>
+         <DesktopUpdatesProvider>
+-          <App />
++          <WorkspaceApp />
+         </DesktopUpdatesProvider>
+       </BrowserRouter>
+     </I18nBootstrap>
+diff --git a/apps/web/src/pages/AccountSettingsOverlay.tsx b/apps/web/src/pages/AccountSettingsOverlay.tsx
+index 31a65b1..9bca40b 100644
+--- a/apps/web/src/pages/AccountSettingsOverlay.tsx
++++ b/apps/web/src/pages/AccountSettingsOverlay.tsx
+@@ -108,20 +108,20 @@ export function GeneralSettingsPanels({
+ 
+   return (
+     <div className="space-y-5">
+-      <section className="rounded-xl border border-border px-4 py-4">
++      {import.meta.env.VITE_MICKY_LOCAL_ONLY !== '1' && <section className="rounded-xl border border-border px-4 py-4">
+         <h3 className="text-[15px] font-medium text-foreground">
+           <Trans>Account</Trans>
+         </h3>
+         <p className="mt-3 text-[14px] text-foreground/75">{name}</p>
+         {email ? <p className="mt-1 text-[13px] text-muted-foreground/70">{email}</p> : null}
+         <AccountAccess onSecurity={setAccountSecurity} />
+-      </section>
++      </section>}
+ 
+-      {accountSecurity?.hasPassword && accountSecurity.passwordChangeEnabled !== false ? (
++      {import.meta.env.VITE_MICKY_LOCAL_ONLY !== '1' && accountSecurity?.hasPassword && accountSecurity.passwordChangeEnabled !== false ? (
+         <ChangePasswordSection email={email} />
+       ) : null}
+ 
+-      {messagingEnabled && onOpenMessaging ? (
++      {import.meta.env.VITE_MICKY_LOCAL_ONLY !== '1' && messagingEnabled && onOpenMessaging ? (
+         <section className="rounded-xl border border-border px-4 py-4">
+           <h3 className="text-[15px] font-medium text-foreground">
+             <Trans>Messaging</Trans>
+diff --git a/apps/web/src/pages/ModelSettingsOverlay.tsx b/apps/web/src/pages/ModelSettingsOverlay.tsx
+index 11d7dac..b7f572e 100644
+--- a/apps/web/src/pages/ModelSettingsOverlay.tsx
++++ b/apps/web/src/pages/ModelSettingsOverlay.tsx
+@@ -67,6 +67,7 @@ import { rpc } from "../lib/rpc";
+ import { useModelOAuthSignIn } from "../lib/use-model-oauth-signin";
+ import { errorText } from "../lib/user-error";
+ import { ModelBackupsSettings } from "./ModelBackupsSettings";
++import { MickyLocalModels } from "./MickyLocalModels";
+ 
+ function connectionMaxTokensField(providerId: string, stored: number | undefined): string {
+   if (providerId === OPENAI_COMPATIBLE_PROVIDER_ID) {
+@@ -1502,6 +1503,7 @@ export function ModelSettingsOverlay({
+     </>
+   );
+ 
++  if (import.meta.env.VITE_MICKY_LOCAL_ONLY === '1') return embedded ? <MickyLocalModels/> : <Dialog open onOpenChange={open=>{if(!open)handleClose();}}><DialogContent><DialogTitle>Local models</DialogTitle><MickyLocalModels/></DialogContent></Dialog>;
+   if (embedded) {
+     return (
+       <div data-testid="model-settings" className="flex min-h-0 flex-1 flex-col overflow-hidden">
+diff --git a/apps/web/src/pages/Onboarding.tsx b/apps/web/src/pages/Onboarding.tsx
+index d47f6d9..b1c0a00 100644
+--- a/apps/web/src/pages/Onboarding.tsx
++++ b/apps/web/src/pages/Onboarding.tsx
+@@ -200,7 +200,7 @@ export function OnboardingPage() {
+     ])
+       .then(([me, models, integrations]) => {
+         setIntegrationSetup(integrations);
+-        setCatalog(models);
++        setCatalog(import.meta.env.VITE_MICKY_LOCAL_ONLY === '1' ? models.filter(model=>model.provider==='local') : models);
+         deploymentDefaultModelRef.current = me.defaultModel;
+         const preferred =
+           models.find(
+diff --git a/apps/web/src/pages/SettingsOverlay.tsx b/apps/web/src/pages/SettingsOverlay.tsx
+index fc6467b..2afc85d 100644
+--- a/apps/web/src/pages/SettingsOverlay.tsx
++++ b/apps/web/src/pages/SettingsOverlay.tsx
+@@ -137,11 +137,11 @@ export function SettingsOverlay({
+     { id: "general", label: t`General`, icon: Settings },
+     { id: "models", label: t`Models`, icon: Cpu },
+     { id: "memory", label: t`Memory`, icon: Brain },
+-    { id: "voice", label: t`Voice`, icon: Volume2 },
++    ...(import.meta.env.VITE_MICKY_LOCAL_ONLY === '1' ? [] : [{ id: "voice" as const, label: t`Voice`, icon: Volume2 }]),
+     { id: "usage", label: t`Usage`, icon: Gauge },
+     ...(showComputer ? [{ id: "computer" as const, label: t`Computer`, icon: Monitor }] : []),
+-    ...(billingEnabled ? [{ id: "billing" as const, label: t`Billing`, icon: CreditCard }] : []),
+-    { id: "updates", label: t`Updates`, icon: CloudDownload },
++    ...(billingEnabled && import.meta.env.VITE_MICKY_LOCAL_ONLY !== '1' ? [{ id: "billing" as const, label: t`Billing`, icon: CreditCard }] : []),
++    ...(import.meta.env.VITE_MICKY_LOCAL_ONLY === '1' ? [] : [{ id: "updates" as const, label: t`Updates`, icon: CloudDownload }]),
+   ];
+ 
+   const sectionTitle =
+diff --git a/apps/web/src/pages/Shell.tsx b/apps/web/src/pages/Shell.tsx
+index e9abac0..38c8e83 100644
+--- a/apps/web/src/pages/Shell.tsx
++++ b/apps/web/src/pages/Shell.tsx
+@@ -3689,7 +3689,7 @@ export function ShellPage() {
+             onRefresh={refreshActiveThread}
+             onBotChanged={refreshBots}
+             onAddRoutine={addSkillRoutine}
+-            voiceReady={Boolean(voiceStatus?.ready)}
++            voiceReady={import.meta.env.VITE_MICKY_LOCAL_ONLY !== '1' && Boolean(voiceStatus?.ready)}
+             speakingMessageId={speakingMessageId}
+             onSpeak={speakMessage}
+             onOpenComputer={onOpenComputer}
+@@ -3760,7 +3760,7 @@ export function ShellPage() {
+         ) : null}
+       </main>
+ 
+-      <CallCard onSettings={() => openSettings("voice")} />
++      {import.meta.env.VITE_MICKY_LOCAL_ONLY !== '1' && <CallCard onSettings={() => openSettings("voice")} />}
+ 
+       <ResizableSidePanel
+         botsSidebarCollapsed={botsSidebarCollapsed}
+diff --git a/packages/adapters/src/context-selection.ts b/packages/adapters/src/context-selection.ts
+index 53b1ed0..b6c50c6 100644
+--- a/packages/adapters/src/context-selection.ts
++++ b/packages/adapters/src/context-selection.ts
+@@ -38,6 +38,7 @@ export class ContextBudgetError extends Error {
+   ) {
+     super("Required context exceeds the model context budget");
+     this.name = "ContextBudgetError";
++    if(process.env.RAKAZO_LOCAL_ONLY==='1')console.warn(`Local context budget: estimated=${estimatedTokens}, available=${availableTokens}`);
+   }
+ }
+ function imageBlocks(value: unknown): object[] {
+diff --git a/packages/adapters/src/deployment-model.ts b/packages/adapters/src/deployment-model.ts
+index bd541c5..c52e86d 100644
+--- a/packages/adapters/src/deployment-model.ts
++++ b/packages/adapters/src/deployment-model.ts
+@@ -43,7 +43,10 @@ export function resolveDeploymentModel(env: NodeJS.ProcessEnv = process.env) {
+     anthropic: "claude-sonnet-5",
+   };
+   const explicitModel = env.PI_DEFAULT_MODEL?.trim();
+-  const key = keys[provider];
++  const localModels = (env.RAKAZO_LOCAL_MODELS ?? '').split(',').map(id=>id.trim()).filter(Boolean);
++  let localEndpoint = false;
++  try {const endpoint=new URL(env.RAKAZO_LOCAL_MODELS_URL || 'http://127.0.0.1:11434/v1');localEndpoint=['http:','https:'].includes(endpoint.protocol)&&['127.0.0.1','localhost','[::1]','host.docker.internal'].includes(endpoint.hostname);} catch {}
++  const key = provider === 'local' && explicitModel && localModels.includes(explicitModel) && localEndpoint ? 'local' : keys[provider];
+   const hostCredentials =
+     !key &&
+     Boolean(explicitModel) &&
+diff --git a/packages/adapters/src/pi-runtime.ts b/packages/adapters/src/pi-runtime.ts
+index 60e9b37..0ee5d3e 100644
+--- a/packages/adapters/src/pi-runtime.ts
++++ b/packages/adapters/src/pi-runtime.ts
+@@ -228,7 +228,11 @@ export class PiAgentRuntime implements AgentRuntime {
+           return;
+         }
+         const { models, model, apiKey } = selectedModel;
+-        const toolDefs = request.tools;
++        // Small local models benefit from concise descriptions. Keep names and
++        // parameter schemas intact so every registered capability stays callable.
++        const toolDefs = process.env.RAKAZO_LOCAL_ONLY==='1'
++          ? request.tools.map(tool=>({...tool,description:tool.description?.slice(0,100)}))
++          : request.tools;
+         const nestedAgents = new Set<Agent>();
+         const completionModel = modelForCompletion(model, request.model.maxTokens);
+         trackedBudget = toolCallBudgetFor(request.runId);

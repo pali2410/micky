@@ -1,0 +1,29 @@
+# Local secrets, histories and runtime data
+.env
+.env.*
+!.env.example
+.data/
+.logs/
+work/
+memory.md
+**/local-identities.json
+# Generated/dependency directories
+node_modules/
+**/node_modules/
+.next/
+.next-native/
+dist-desktop/
+**/dist/
+**/.venv/
+**/__pycache__/
+*.py[cod]
+*.tsbuildinfo
+runtimes/node24/
+**/vendor/speech/
+*.exe
+*.dll
+*.zip
+*.gguf
+*.bin
+*.wav
+*.log

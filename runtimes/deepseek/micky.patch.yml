@@ -1,0 +1,40 @@
+- id: llm-deepseek
+  disabled: true
+- id: persistent-pwsh
+  disabled: true
+- id: persistent-bash
+  disabled: true
+- id: system-prompt
+  config:
+    includeHarnessIdentity: false
+    includeRuntimeContext: false
+    personaPrefix: 'You are a reasoning engine inside Micky, a native Windows assistant. Follow the requested output format. Micky executes actions and supplies observations. Never claim an action happened without supplied evidence.'
+- insert:
+    - id: micky-local-models
+      name: '@deepseek-ai/dsh-llm-pi-ai'
+      config:
+        providers:
+          micky-local:
+            displayName: Micky local models
+            apiKeyEnv: MICKY_OLLAMA_KEY
+            api: openai-completions
+            baseURL: !!js process.env.MICKY_LLM_GATEWAY_URL
+            retryPolicy:
+              mode: normal
+              maxRetries: 2
+            models:
+              - id: micky-tools-phi4
+                name: Local Phi4 tools
+                contextWindow: 8192
+              - id: phi4-mini:latest
+                name: Local planner
+                contextWindow: 8192
+              - id: micky-tools-qwen25
+                name: Local tools extended context
+                contextWindow: 8192
+              - id: micky-tools-qwen3
+                name: Local Qwen3 tools
+                contextWindow: 8192
+              - id: qwen2.5:3b
+                name: Local conversation
+                contextWindow: 8192
